@@ -15,6 +15,22 @@ import chisel3.util._
  *          - What if the matmul we want to perform is smaller than the systolic array?
  *          - What if the matmul we want to perform is larger than the systolic array?
  */
+
+/*
+ In order to switch do a double buffered solution we need to have some kind of control logic
+
+ For simplcitiy this is our strategy:
+ - Load weights for the next matmul as soon as the current matmul has started.
+ - The switch should happen as early as possible, meaning the SA is always doing work
+    - I think the switch signal can be propagated to both the right and the bottom neighbour. The SA starts this chain
+    by sending the switch signal to PE(0,0). This means we can have two concurrent matmuls going. The current one is
+    calculating its final outputs while the new one is starting.
+  - Lets assume the dimensions matches exactly the shape of the SA. This is an assumption which limits us massively
+    but makes it easier rn to prototype. In the future we need to have some kind of input which states the dimensions of
+    X and W. In any case this info will be used to find the number of cycles we need to wait before the first switch
+    signal is given to PE(0,0).
+
+ */
 class SystolicArrayGeneric(val rows: Int = 2, val cols: Int = 2, val weightFIFODepth: Int = 16,
                            val inputFIFODepth: Int = 16) extends Module {
   val io = IO(new Bundle {

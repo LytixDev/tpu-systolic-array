@@ -7,17 +7,16 @@ import chisel3.util._
  * Computes xW, where W is assumed to already be transposed, and x is rotated by 90.
  * Each PE in the first row is connected to a weight FIFO.
  * Each PE in the first column is connected to an input FIFO.
- * TODO: 1. Test with a massive x comapred to W.
- *       2. Double buffering?
- *       3. Load weights for next matmul while current matmul is still processing.
- *       4. Test with an increased dimension of the Systolic array
- *       5. Test with tiling
- *       6. What if the matmul we want to perform is smaller than the systolic array?
+ * TODO:
+ *       - Double buffering?
+ *          - Load weights for next matmul while current matmul is still processing.
+ *       - start the current matmul as early as possible even if the FIFOs are not completely filled
+ *       - Test with tiling
+ *          - What if the matmul we want to perform is smaller than the systolic array?
+ *          - What if the matmul we want to perform is larger than the systolic array?
  */
-class SystolicArrayGeneric extends Module {
-  val cols = 2
-  val rows = 2
-
+class SystolicArrayGeneric(val rows: Int = 2, val cols: Int = 2, val weightFIFODepth: Int = 16,
+                           val inputFIFODepth: Int = 16) extends Module {
   val io = IO(new Bundle {
     val weightIn = Input(Vec(cols, UInt(8.W)))
     val inputIn = Input(Vec(rows, UInt(8.W)))
@@ -33,8 +32,8 @@ class SystolicArrayGeneric extends Module {
   })
 
   // 8-bit data, 16 entries deep
-  val weightFIFOs = VecInit(Seq.fill(cols)(Module(new Queue(UInt(8.W), 16)).io))
-  val inputFIFOs  = VecInit(Seq.fill(rows)(Module(new Queue(UInt(8.W), 16)).io))
+  val weightFIFOs = VecInit(Seq.fill(cols)(Module(new Queue(UInt(8.W), weightFIFODepth)).io))
+  val inputFIFOs  = VecInit(Seq.fill(rows)(Module(new Queue(UInt(8.W), inputFIFODepth)).io))
 
   // Staggering counters and control
   val cyclesSinceStart = RegInit(0.U(8.W))

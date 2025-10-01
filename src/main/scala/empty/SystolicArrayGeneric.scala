@@ -30,6 +30,10 @@ import chisel3.util._
     X and W. In any case this info will be used to find the number of cycles we need to wait before the first switch
     signal is given to PE(0,0).
 
+   - And importantly, the SA is not responsible for ensuring the FIFOs are populated. It assumes that it has the
+     inputs and weights it needs at any time in the FIFO. So when it gets the start signal it assumes it has the data it
+     needs for the current cycle.
+
  */
 class SystolicArrayGeneric(val rows: Int = 2, val cols: Int = 2, val weightFIFODepth: Int = 16,
                            val inputFIFODepth: Int = 16) extends Module {

@@ -8,9 +8,9 @@ import chisel3.util._
  * Each PE in the first row is connected to a weight FIFO.
  * Each PE in the first column is connected to an input FIFO.
  * TODO:
+ *       - make generic in terms of bit width of weights, inputs, and accumulators (same for the PEs).
  *       - Double buffering?
  *          - Load weights for next matmul while current matmul is still processing.
- *       - start the current matmul as early as possible even if the FIFOs are not completely filled
  *       - Test with tiling
  *          - What if the matmul we want to perform is smaller than the systolic array?
  *          - What if the matmul we want to perform is larger than the systolic array?

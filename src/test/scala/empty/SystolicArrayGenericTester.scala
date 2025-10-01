@@ -98,7 +98,7 @@ class SystolicArrayGenericTester extends AnyFlatSpec with ChiselScalatestTester 
     // The output is also staggered, so in the first cycle we only expect to see row(0)(0)
     // Then in the second cycle it should be row(1)(0), and row(0)(1), etc.
     for (i <- 0 until saCols * numberOfInputs) {
-      // println(s"Index: $i, Accumulator 0: ${dut.io.accumulatorOut(0).peek().litValue}, Accumulator 1: ${dut.io.accumulatorOut(1).peek().litValue}")
+      // println(s"Regular: Index: $i, Accumulator 0: ${dut.io.accumulatorOut(0).peek().litValue}, Accumulator 1: ${dut.io.accumulatorOut(1).peek().litValue}")
 
       // TODO: I think this can be represented more cleanly
       // Calculate which results should be ready at this cycle
@@ -108,6 +108,7 @@ class SystolicArrayGenericTester extends AnyFlatSpec with ChiselScalatestTester 
           // Result for expect(row)(col) appears at cycle (col + row)
           val resultCycle = col + row
           if (i == resultCycle) {
+            // println(s"Regular: Expecting result at index $i: expect($row)($col) = ${expect(row)(col)}")
             dut.io.accumulatorOut(col).expect(expect(row)(col).U)
           }
         }
@@ -185,11 +186,9 @@ class SystolicArrayGenericTester extends AnyFlatSpec with ChiselScalatestTester 
     }.fork {
       // Result checking thread
       for (cycle <- 0 until totalProcessingCycles) {
-        // Results appear after saRows cycles to saturate first column + saRows cycles for first result
-        // In early start, we've already done 1 cycle + fork cycles
-        val cyclesSinceStart = cycle + 1
-        if (cyclesSinceStart >= (saRows + saRows)) {
-          val resultCheckCycle = cyclesSinceStart - (saRows + saRows)
+        // Only check the results one the first result is ready
+        val resultCheckCycle = cycle - (saRows + saRows)
+        if (resultCheckCycle >= 0) {
           for (col <- 0 until expect(0).length) {
             for (row <- 0 until expect.length) {
               val expectedResultCycle = col + row
@@ -300,6 +299,37 @@ class SystolicArrayGenericTester extends AnyFlatSpec with ChiselScalatestTester 
         Array(3, 4)
       )
       runSystolicArrayEarlyStart(X, W_T, dut)
+    }
+  }
+
+  "SystolicArrayGeneric" should "just wek with early start optimization and massive X" in {
+    val saRows = 4
+    val saCols = 4
+    test(new SystolicArrayGeneric(saRows, saCols)).withAnnotations(Seq(WriteVcdAnnotation)) { dut =>
+      val X = Array(
+        Array(1, 2, 3, 4),
+        Array(2, 2, 2, 2),
+        Array(1, 2, 3, 4),
+        Array(2, 2, 2, 2),
+        Array(1, 2, 3, 4),
+        Array(2, 2, 2, 2),
+        Array(1, 2, 3, 4),
+        Array(2, 2, 2, 2),
+        Array(1, 2, 3, 4),
+        Array(2, 2, 2, 2),
+        Array(1, 2, 3, 4),
+        Array(2, 2, 2, 2),
+        Array(1, 2, 3, 4),
+        Array(2, 2, 2, 2),
+        Array(1, 2, 3, 4),
+      )
+      val W_T = Array(
+        Array(1, 2, 1, 2),
+        Array(1, 2, 1, 2),
+        Array(1, 2, 1, 2),
+        Array(1, 2, 1, 2),
+      )
+      runSystolicArrayEarlyStart(X, W_T, dut, saRows = saRows, saCols = saCols)
     }
   }
 }

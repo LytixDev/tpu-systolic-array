@@ -16,3 +16,5 @@ Cleanup the repository with:
 ```bash
 make clean
 ```
+
+sbt "testOnly empty.SystolicArrayGenericTester"

@@ -117,6 +117,93 @@ class SystolicArrayGenericTester extends AnyFlatSpec with ChiselScalatestTester 
     }
   }
 
+  def runSystolicArrayEarlyStart(X: Array[Array[Int]], W_T: Array[Array[Int]], dut: SystolicArrayGeneric, saRows: Int = 2, saCols: Int = 2): Unit = {
+    val expect = matmul(X, W_T)
+
+    // Input to the FIFOs
+    val X_in = matrixToColumns(X)
+    val W_in = matrixToColumnsReversed(W_T)
+    val maxInputLength = X_in.map(_.length).max
+    val maxWeightLength = W_in.map(_.length).max
+    val maxLength = math.max(maxInputLength, maxWeightLength)
+
+    dut.io.start.poke(false.B)
+
+    // Enable loading for all FIFOs
+    for (i <- 0 until saCols) {
+      dut.io.loadWeight(i).poke(true.B)
+    }
+    for (i <- 0 until saRows) {
+      dut.io.loadInput(i).poke(true.B)
+    }
+
+    // Load the first element into each FIFOs
+    for (row <- X_in.indices) {
+        dut.io.inputIn(row).poke(X_in(row)(0).U)
+    }
+    for (col <- W_in.indices) {
+      dut.io.weightIn(col).poke(W_in(col)(0).U)
+    }
+    dut.clock.step()
+
+    // Start the systolic array immediately after first elements are loaded
+    dut.io.start.poke(true.B)
+
+    // We will use the fork/join pattern which makes writing the test much easier
+    // One thread will send in the data to the FIFOs while another one will check the final output for correctness
+    val totalProcessingCycles = saRows + saRows + (saCols * X.length)
+
+    fork {
+      // Data loading thread
+      for (cycle <- 1 until maxLength) {
+        for (row <- X_in.indices) {
+          if (cycle < X_in(row).length) {
+            dut.io.inputIn(row).poke(X_in(row)(cycle).U)
+          }
+        }
+        for (col <- W_in.indices) {
+          if (cycle < W_in(col).length) {
+            dut.io.weightIn(col).poke(W_in(col)(cycle).U)
+          }
+        }
+        dut.clock.step()
+      }
+
+      for (i <- 0 until saCols) {
+        dut.io.loadWeight(i).poke(false.B)
+      }
+      for (i <- 0 until saRows) {
+        dut.io.loadInput(i).poke(false.B)
+      }
+
+      // Continue stepping clock for remaining processing.
+      // TODO: Is this really needed?
+      val remainingCycles = totalProcessingCycles - (maxLength - 1)
+      for (_ <- 0 until remainingCycles) {
+        dut.clock.step()
+      }
+    }.fork {
+      // Result checking thread
+      for (cycle <- 0 until totalProcessingCycles) {
+        // Results appear after saRows cycles to saturate first column + saRows cycles for first result
+        // In early start, we've already done 1 cycle + fork cycles
+        val cyclesSinceStart = cycle + 1
+        if (cyclesSinceStart >= (saRows + saRows)) {
+          val resultCheckCycle = cyclesSinceStart - (saRows + saRows)
+          for (col <- 0 until expect(0).length) {
+            for (row <- 0 until expect.length) {
+              val expectedResultCycle = col + row
+              if (resultCheckCycle == expectedResultCycle) {
+                dut.io.accumulatorOut(col).expect(expect(row)(col).U)
+              }
+            }
+          }
+        }
+        dut.clock.step()
+      }
+    }.join()
+  }
+
   "SystolicArrayGeneric" should "just werk" in {
     test(new SystolicArrayGeneric).withAnnotations(Seq(WriteVcdAnnotation)) { dut =>
       // rows x columns
@@ -199,6 +286,20 @@ class SystolicArrayGenericTester extends AnyFlatSpec with ChiselScalatestTester 
         Array(1, 2, 1, 2),
       )
       runSystolicArrayUntilFinish(X, W_T, dut, saRows = saRows, saCols = saCols)
+    }
+  }
+
+  "SystolicArrayGeneric" should "just wek with early start optimization" in {
+    test(new SystolicArrayGeneric).withAnnotations(Seq(WriteVcdAnnotation)) { dut =>
+      val X = Array(
+        Array(3, 6),
+        Array(2, 4)
+      )
+      val W_T = Array(
+        Array(1, 2),
+        Array(3, 4)
+      )
+      runSystolicArrayEarlyStart(X, W_T, dut)
     }
   }
 }

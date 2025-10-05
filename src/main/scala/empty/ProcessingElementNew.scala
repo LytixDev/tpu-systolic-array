@@ -14,12 +14,11 @@ class ProcessingElementNew extends Module {
     val enable = Input(Bool())
 
     val weightOut = Output(UInt(8.W))
+    val switchWeightOut = Output(Bool())
     val inputOut = Output(UInt(8.W))
     val partialSumOut = Output(UInt(32.W))
     val enableOut = Output(Bool())
   })
-
-  val currentWeight = RegInit(0.U(1.W))
 
   /*
    * There is an edge case where the first time we're loading weights into the SA we are both loading and later reading
@@ -34,14 +33,20 @@ class ProcessingElementNew extends Module {
   * */
   // val isInitial = RegInit(0.U(1.W))
 
+  /*
+   * After a switch weight signal we want to switch weights in the same cycle
+   *
+   * NOTE: This feels inelegant? What will this be synthesized into?
+   */
+  val currentWeightReg = RegInit(0.U(1.W))
+  val currentWeight = Mux(io.switchWeightIn, ~currentWeightReg, currentWeightReg)
+  // Update the register for the next cycle
+  currentWeightReg := currentWeight
+
   val weight0 = RegInit(0.U(8.W))
   val weight1 = RegInit(0.U(8.W))
   val inputReg = RegInit(0.U(8.W))
   val partialSumReg = RegInit(0.U(32.W))
-
-  when (io.switchWeightIn) {
-    currentWeight := ~currentWeight
-  }
 
   when(io.acceptWeightIn) {
     // Accept the weight into the not currently selected weight
@@ -57,7 +62,8 @@ class ProcessingElementNew extends Module {
     partialSumReg := io.inputIn * Mux(currentWeight === 0.U, weight0, weight1) + io.partialSumIn
   }
 
-  io.weightOut := Mux(currentWeight === 0.U, weight0, weight1)
+  io.weightOut := Mux(currentWeight === 0.U, weight1, weight0)
+  io.switchWeightOut := RegNext(io.switchWeightIn, false.B)
   io.inputOut := inputReg
   io.partialSumOut := partialSumReg
   io.enableOut := RegNext(io.enable, false.B)

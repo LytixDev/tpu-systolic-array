@@ -89,10 +89,16 @@ class SystolicArrayGenericNewTester extends AnyFlatSpec with ChiselScalatestTest
     for (i <- 0 until saRows) {
       dut.clock.step()
     }
+
+    // Send switch signal when the first input starts to flow
+    dut.io.switchWeight.poke(true.B)
+
     // The inputs are flowing and after this loop the first result is ready
-    for (i <- 0 until saRows) {
+    for (i <- 0 until saRows - 1) {
       dut.clock.step()
     }
+    dut.io.switchWeight.poke(false.B)
+    dut.clock.step()
 
     val numberOfInputs = X.length
     // The output is also staggered, so in the first cycle we only expect to see row(0)(0)

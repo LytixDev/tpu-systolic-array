@@ -38,7 +38,8 @@ import chisel3.util._
                 this is only true for the first time since every other execution will load weights into the reg that
                 is not being read from.
 
-                SOLUTION: We may actually be able to send the switch signal at the same time as the start signal.
+                SOLUTION: We may actually be able to send the switch signal at the same time as the first input
+                 has started to flow.
 
  */
 class SystolicArrayGenericNew(val rows: Int = 2, val cols: Int = 2, val weightFIFODepth: Int = 16,
@@ -51,6 +52,7 @@ class SystolicArrayGenericNew(val rows: Int = 2, val cols: Int = 2, val weightFI
     val loadWeight = Input(Vec(cols, Bool()))
     val loadInput = Input(Vec(rows, Bool()))
     val start = Input(Bool())
+    val switchWeight = Input(Bool())
 
     val accumulatorOut = Output(Vec(cols, UInt(32.W)))
   })
@@ -112,6 +114,9 @@ class SystolicArrayGenericNew(val rows: Int = 2, val cols: Int = 2, val weightFI
     }
   }
 
+  // Switch signal propagates to both the down and right neighbour.
+  peArray2D(0)(0).switchWeightIn := io.switchWeight
+
   for (j <- 0 until cols) {
     // PEs in the first row are connected to the FIFOs
     peArray2D(0)(j).weightIn := weightFIFOs(j).deq.bits
@@ -122,11 +127,19 @@ class SystolicArrayGenericNew(val rows: Int = 2, val cols: Int = 2, val weightFI
 
     peArray2D(0)(j).partialSumIn := 0.U
 
+    // Switch signal propagation to the right.
+    if (j > 0) {
+      peArray2D(0)(j).switchWeightIn := peArray2D(0)(j - 1).switchWeightOut
+    }
+
     // Weights and partial sums move down
     for (i <- 0 until rows - 1) {
       peArray2D(i + 1)(j).partialSumIn := peArray2D(i)(j).partialSumOut
       peArray2D(i + 1)(j).weightIn := peArray2D(i)(j).weightOut
       peArray2D(i + 1)(j).acceptWeightIn := weightAccept // peArray2D(i)(j).acceptWeightOut
+
+      // Switch signal propagates downwards
+      peArray2D(i + 1)(j).switchWeightIn := peArray2D(i)(j).switchWeightOut
     }
   }
 

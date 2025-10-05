@@ -20,6 +20,20 @@ class ProcessingElementNew extends Module {
   })
 
   val currentWeight = RegInit(0.U(1.W))
+
+  /*
+   * There is an edge case where the first time we're loading weights into the SA we are both loading and later reading
+   * from the same weight reg. We are unable to  ... i have an idea
+   *
+   * This means that , we must load into the same reg as we later will be reading from.
+                this is only true for the first time since every other execution will load weights into the reg that
+                is not being read from.
+
+                Need some kind of, if empty load.
+
+  * */
+  // val isInitial = RegInit(0.U(1.W))
+
   val weight0 = RegInit(0.U(8.W))
   val weight1 = RegInit(0.U(8.W))
   val inputReg = RegInit(0.U(8.W))

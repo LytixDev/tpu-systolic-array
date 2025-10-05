@@ -41,8 +41,8 @@ import chisel3.util._
                 SOLUTION: We may actually be able to send the switch signal at the same time as the start signal.
 
  */
-class SystolicArrayGeneric(val rows: Int = 2, val cols: Int = 2, val weightFIFODepth: Int = 16,
-                           val inputFIFODepth: Int = 16) extends Module {
+class SystolicArrayGenericNew(val rows: Int = 2, val cols: Int = 2, val weightFIFODepth: Int = 16,
+                              val inputFIFODepth: Int = 16) extends Module {
   val io = IO(new Bundle {
     val weightIn = Input(Vec(cols, UInt(8.W)))
     val inputIn = Input(Vec(rows, UInt(8.W)))
@@ -51,8 +51,6 @@ class SystolicArrayGeneric(val rows: Int = 2, val cols: Int = 2, val weightFIFOD
     val loadWeight = Input(Vec(cols, Bool()))
     val loadInput = Input(Vec(rows, Bool()))
     val start = Input(Bool())
-    //val reset = Input(Bool())
-    //val resetPartialSum = Input(Bool())
 
     val accumulatorOut = Output(Vec(cols, UInt(32.W)))
   })
@@ -67,7 +65,7 @@ class SystolicArrayGeneric(val rows: Int = 2, val cols: Int = 2, val weightFIFOD
   val weightCounters = RegInit(VecInit(Seq.fill(cols)(0.U(8.W))))
 
   val peArray2D = VecInit(Seq.fill(rows)(
-    VecInit(Seq.fill(cols)(Module(new ProcessingElement()).io))
+    VecInit(Seq.fill(cols)(Module(new ProcessingElementNew()).io))
   ))
 
   when(io.start) {

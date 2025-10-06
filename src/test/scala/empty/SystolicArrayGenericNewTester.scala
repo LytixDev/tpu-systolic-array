@@ -124,100 +124,6 @@ class SystolicArrayGenericNewTester extends AnyFlatSpec with ChiselScalatestTest
     }
   }
 
-  def runSystolicArrayEarlyStart(X: Array[Array[Int]], W_T: Array[Array[Int]], dut: SystolicArrayGenericNew, saRows: Int = 2, saCols: Int = 2): Unit = {
-    val expect = matmul(X, W_T)
-
-    // Input to the FIFOs
-    val X_in = matrixToColumns(X)
-    val W_in = matrixToColumnsReversed(W_T)
-    val maxInputLength = X_in.map(_.length).max
-    val maxWeightLength = W_in.map(_.length).max
-    val maxLength = math.max(maxInputLength, maxWeightLength)
-
-    dut.io.start.poke(false.B)
-    dut.io.switchWeight.poke(false.B)
-
-    // Enable loading for all FIFOs
-    for (i <- 0 until saCols) {
-      dut.io.loadWeight(i).poke(true.B)
-    }
-    for (i <- 0 until saRows) {
-      dut.io.loadInput(i).poke(true.B)
-    }
-
-    // Load the first element into each FIFOs
-    for (row <- X_in.indices) {
-        dut.io.inputIn(row).poke(X_in(row)(0).U)
-    }
-    for (col <- W_in.indices) {
-      dut.io.weightIn(col).poke(W_in(col)(0).U)
-    }
-    dut.clock.step()
-
-    // Start the systolic array immediately after first elements are loaded
-    dut.io.start.poke(true.B)
-
-    // We will use the fork/join pattern which makes writing the test much easier
-    // One thread will send in the data to the FIFOs while another one will check the final output for correctness
-    val totalProcessingCycles = saRows + saRows + (saCols * X.length)
-
-    fork {
-      // Data loading thread
-      // Send switch signal after `saRows` cycles when first input starts flowing
-      for (cycle <- 1 until maxLength) {
-        if (cycle == saRows) {
-          dut.io.switchWeight.poke(true.B)
-        }
-
-        for (row <- X_in.indices) {
-          if (cycle < X_in(row).length) {
-            dut.io.inputIn(row).poke(X_in(row)(cycle).U)
-          }
-        }
-        for (col <- W_in.indices) {
-          if (cycle < W_in(col).length) {
-            dut.io.weightIn(col).poke(W_in(col)(cycle).U)
-          }
-        }
-        dut.clock.step()
-
-        if (cycle == saRows) {
-          dut.io.switchWeight.poke(false.B)
-        }
-      }
-
-      for (i <- 0 until saCols) {
-        dut.io.loadWeight(i).poke(false.B)
-      }
-      for (i <- 0 until saRows) {
-        dut.io.loadInput(i).poke(false.B)
-      }
-
-      // Continue stepping clock for remaining processing.
-      val remainingCycles = totalProcessingCycles - (maxLength - 1)
-      for (_ <- 0 until remainingCycles) {
-        dut.clock.step()
-      }
-    }.fork {
-      // Result checking thread
-      for (cycle <- 0 until totalProcessingCycles) {
-        // Only check the results once the first result is ready
-        val resultCheckCycle = cycle - (saRows + saRows)
-        if (resultCheckCycle >= 0) {
-          for (col <- 0 until expect(0).length) {
-            for (row <- 0 until expect.length) {
-              val expectedResultCycle = col + row
-              if (resultCheckCycle == expectedResultCycle) {
-                dut.io.accumulatorOut(col).expect(expect(row)(col).U)
-              }
-            }
-          }
-        }
-        dut.clock.step()
-      }
-    }.join()
-  }
-
   "SystolicArrayGenericNew" should "just werk" in {
     test(new SystolicArrayGenericNew).withAnnotations(Seq(WriteVcdAnnotation)) { dut =>
       // rows x columns
@@ -235,6 +141,9 @@ class SystolicArrayGenericNewTester extends AnyFlatSpec with ChiselScalatestTest
   }
 
   "SystolicArrayGenericNew" should "be able to calculate two consecutive matmuls in a pipelined fashion" in {
+    val saRows = 2
+    val saCols = 2
+
     test(new SystolicArrayGenericNew).withAnnotations(Seq(WriteVcdAnnotation)) { dut =>
       // rows x columns
       val X1 = Array(
@@ -255,26 +164,14 @@ class SystolicArrayGenericNewTester extends AnyFlatSpec with ChiselScalatestTest
         Array(8, 4)
       )
 
-      /*
-      * The FIFOs should be saturated with both X1, X2, W_T1, and W_T2 as soon as possible
-      * The switch signal will be given when PE(0, 0) has just calculated its final result in the original matmul. This
-      * happens after N_ROWS + N_COLS from start.
-      *
-      * For now we will manually provide the switch signal in the test harness, but at some point we need a control
-      * unit for the SA that is able to figure this out on its own.
-      */
-
-      val saRows = 2
-      val saCols = 2
-
       val expect1 = matmul(X1, W_T1)
       val expect2 = matmul(X2, W_T2)
 
-      // Input to the FIFOs - interleave both matmuls
       val X1_in = matrixToColumns(X1)
       val X2_in = matrixToColumns(X2)
       val W_T1_in = matrixToColumnsReversed(W_T1)
       val W_T2_in = matrixToColumnsReversed(W_T2)
+
 
       dut.io.start.poke(false.B)
       dut.io.switchWeight.poke(false.B)
@@ -287,8 +184,12 @@ class SystolicArrayGenericNewTester extends AnyFlatSpec with ChiselScalatestTest
         dut.io.loadInput(i).poke(true.B)
       }
 
+      // NOTE: This will pre-load all the data into the FIFOs before we start actually executing
       // Load all data into FIFOs: first matmul, then second matmul
-      for (cycle <- 0 until saRows) {
+      val maxLength1 = math.max(X1_in.map(_.length).max, W_T1_in.map(_.length).max)
+      val maxLength2 = math.max(X2_in.map(_.length).max, W_T2_in.map(_.length).max)
+
+      for (cycle <- 0 until maxLength1) {
         // Load first matmul inputs
         for (row <- X1_in.indices) {
           if (cycle < X1_in(row).length) {
@@ -305,7 +206,7 @@ class SystolicArrayGenericNewTester extends AnyFlatSpec with ChiselScalatestTest
       }
 
       // Load second matmul data
-      for (cycle <- 0 until saRows) {
+      for (cycle <- 0 until maxLength2) {
         // Load second matmul inputs
         for (row <- X2_in.indices) {
           if (cycle < X2_in(row).length) {
@@ -329,44 +230,67 @@ class SystolicArrayGenericNewTester extends AnyFlatSpec with ChiselScalatestTest
         dut.io.loadInput(i).poke(false.B)
       }
 
-      // Start the systolic array
+
+      /*
+      * At this point the FIFOs are saturated with both X1, X2, W_T1, and W_T2.
+      *
+      * We will not start the SA computation.
+      * The FIRST switch will be given when PE(0, 0) has gotten its final correct weight, I.E the entire first col
+      * has been saturated. This is incidentally the same time the enable signal will be given to PE(0,0).
+      * It is important that the SA continues to send weights after the first switch so that the "back" weight reg in
+      * each PE is saturated with weights for the next matmul.
+      *
+      * NOTE: At some point handling the switch signals will be done by a control unit, but at this point we will do
+      * it manually in the test.
+      *
+      * Subsequenet switches will happen at the same cycle the first input of a new matmul is sent to PE(0, 0).
+      *
+      * Since both input and weight matrices are 2x2 for both matmuls, weights and inputs will continue to stream
+      * once the they have started.
+      */
+
       dut.io.start.poke(true.B)
+
 
       val numberOfInputs = X1.length
       val totalCycles = saRows + saRows + (saCols * numberOfInputs) * 2
 
       fork {
-        // Control thread - manages switch signals
-        // Saturate the first column with first matmul weights
-        for (i <- 0 until saRows) {
-          dut.clock.step()
-        }
+        var cyclesSinceStart = 0
+        // Control thread
 
-        // Send initial switch signal when first input starts to flow
-        dut.io.switchWeight.poke(true.B)
-
-        // The inputs are flowing
+        // Saturate the first column with first matmul weights.
         for (i <- 0 until saRows - 1) {
           dut.clock.step()
+          cyclesSinceStart += 1
         }
-        dut.io.switchWeight.poke(false.B)
-        dut.clock.step()
 
-        // Wait until PE(0,0) finishes its first result (rows + cols cycles from start)
-        // We've already waited saRows + saRows cycles, so we need cols more cycles
-        val cyclesUntilSecondSwitch = saRows + saCols - (saRows + saRows)
-        for (_ <- 0 until cyclesUntilSecondSwitch) {
+        // Send initial switch signal one cycle before first input starts to flow
+        dut.io.switchWeight.poke(true.B)
+        dut.clock.step()
+        cyclesSinceStart += 1
+        dut.io.switchWeight.poke(false.B)
+
+        // How many cycles until the next switch?
+        // When PE(0,0) is completely done calculating partial sums for the first matmul
+        // At this point, PE(0,0) has completed its first partial sum.
+        // It will perform x1.cols partial sums for the first matmul. - 1 because of the step above.
+
+        // The inputs are flowing
+        for (i <- 0 until X1(0).length - 1) {
           dut.clock.step()
+          cyclesSinceStart += 1
         }
 
         // Send second switch signal to start second matmul
-        println(s"Sending second switch signal at cycle ${saRows + saRows + cyclesUntilSecondSwitch}")
+        println(s"Sending second switch signal at cycle ${cyclesSinceStart} since start")
         dut.io.switchWeight.poke(true.B)
         dut.clock.step()
+        cyclesSinceStart += 1
         dut.io.switchWeight.poke(false.B)
 
         // Continue clocking for remaining cycles
-        val remainingCycles = totalCycles - (saRows + saRows + cyclesUntilSecondSwitch + 1)
+        val remainingCycles = X2.length + X2(0).length
         for (_ <- 0 until remainingCycles) {
           dut.clock.step()
         }
@@ -410,22 +334,5 @@ class SystolicArrayGenericNewTester extends AnyFlatSpec with ChiselScalatestTest
     }
   }
 
-  /*
-  "SystolicArrayGenericNew" should "werk with early start" in {
-    test(new SystolicArrayGenericNew).withAnnotations(Seq(WriteVcdAnnotation)) { dut =>
-      // rows x columns
-      val X = Array(
-        Array(3, 6),
-        Array(2, 2),
-      )
-      val W_T = Array(
-        Array(1, 2),
-        Array(3, 4)
-      )
-
-      runSystolicArrayEarlyStart(X, W_T, dut)
-    }
-  }
-   */
 
 }

@@ -41,6 +41,9 @@ import chisel3.util._
                 SOLUTION: We may actually be able to send the switch signal at the same time as the first input
                  has started to flow.
 
+
+  ISSUE: Systolic Array should continue to flow weights into the back buffers
+
  */
 class SystolicArrayGenericNew(val rows: Int = 2, val cols: Int = 2, val weightFIFODepth: Int = 16,
                               val inputFIFODepth: Int = 16) extends Module {
@@ -91,9 +94,9 @@ class SystolicArrayGenericNew(val rows: Int = 2, val cols: Int = 2, val weightFI
     weightFIFOs(j).enq.bits := io.weightIn(j)
 
     // Stagger weight FIFO dequeue: column j starts at cycle j
-    // Stop after rows elements have been dequeued
+    // Continue accepting weights for double buffering (no limit on weightCounters)
     val weightStartCycle = j.U
-    val weightActive = io.start && (cyclesSinceStart >= weightStartCycle) && (weightCounters(j) < rows.U)
+    val weightActive = io.start && (cyclesSinceStart >= weightStartCycle)
     weightFIFOs(j).deq.ready := weightActive
 
     when(weightActive && weightFIFOs(j).deq.valid) {
@@ -121,8 +124,8 @@ class SystolicArrayGenericNew(val rows: Int = 2, val cols: Int = 2, val weightFI
     // PEs in the first row are connected to the FIFOs
     peArray2D(0)(j).weightIn := weightFIFOs(j).deq.bits
 
-    // Accept weights from FIFO when it's ready and we haven't saturated yet
-    val weightAccept = weightFIFOs(j).deq.valid && (weightCounters(j) < rows.U) && (cyclesSinceStart >= j.U) && io.start
+    // Accept weights from FIFO when it's ready (no saturation limit for double buffering)
+    val weightAccept = weightFIFOs(j).deq.valid && (cyclesSinceStart >= j.U) && io.start
     peArray2D(0)(j).acceptWeightIn := weightAccept
 
     peArray2D(0)(j).partialSumIn := 0.U

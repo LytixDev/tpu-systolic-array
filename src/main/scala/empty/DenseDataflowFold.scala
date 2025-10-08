@@ -11,15 +11,17 @@ import chisel3.util.log2Ceil
  * Total multipliers = m * k * numberOfPEs
  * Takes n / numberOfPEs cycles to compute
  */
-class DenseDataflowFold(layer: DenseLayer, numberOfPEs: Int) extends Module {
+class DenseDataflowFold(layer: DenseLayer) extends Module {
   val io = IO(new Bundle{
     val inputIn = Input(Vec(layer.m, Vec(layer.n, UInt(8.W))))
-    val outputOut = Output(Vec(layer.m, Vec(layer.k, UInt(32.W))))
+    val inputValid = Input(Bool())
+    val outputOut = Output(Vec(layer.m, Vec(layer.k, UInt(8.W))))
+    val outputValid = Output(Bool())
   })
 
-  require(numberOfPEs >= 1 && numberOfPEs <= layer.n)
-  require(layer.n % numberOfPEs == 0)
-  val cycles = layer.n / numberOfPEs
+  require(layer.PEsPerOutput >= 1 && layer.PEsPerOutput <= layer.n)
+  require(layer.n % layer.PEsPerOutput == 0)
+  val cycles = layer.n / layer.PEsPerOutput
 
   val weights = VecInit(layer.weights.map(row =>
     VecInit(row.map(w => w.U(8.W)))
@@ -27,8 +29,18 @@ class DenseDataflowFold(layer: DenseLayer, numberOfPEs: Int) extends Module {
 
   // Counts from 0 to cycles-1
   val cycleCounter = RegInit(0.U(log2Ceil(cycles + 1).W))
-  when(cycleCounter < cycles.U) {
+  val computing = RegInit(false.B)
+
+  // Immidetly start computing when the valid signal is given
+  val isComputing = io.inputValid || computing
+  when(io.inputValid && !computing) {
+    computing := true.B
+    cycleCounter := 1.U
+  } .elsewhen(computing && cycleCounter < (cycles - 1).U) {
     cycleCounter := cycleCounter + 1.U
+  } .elsewhen(computing && cycleCounter === (cycles - 1).U) {
+    computing := false.B
+    cycleCounter := 0.U
   }
 
   // One accumulator per output element (m*k total)
@@ -37,26 +49,29 @@ class DenseDataflowFold(layer: DenseLayer, numberOfPEs: Int) extends Module {
 
   for (i <- 0 until layer.m) { // for each row in the input
     for (j <- 0 until layer.k) { // for each output element
-      // Reset accumulator
-      when(cycleCounter === 0.U) {
-        accumulators(i)(j) := 0.U
-      }
-
-      // Compute partial sum using numberOfPEs multipliers
+      // Compute partial sum using layer.PEsPerOutput multipliers
       // NOTE: this could be optimized using an adder tree or something
       var partialSum = 0.U
-      for (pe <- 0 until numberOfPEs) {
-        val idx = cycleCounter * numberOfPEs.U + pe.U
+      for (pe <- 0 until layer.PEsPerOutput) {
+        val idx = cycleCounter * layer.PEsPerOutput.U + pe.U
         partialSum = partialSum + io.inputIn(i)(idx) * weights(idx)(j)
       }
 
-      // Accumulate the partial sum
-      when(cycleCounter < cycles.U) {
-        accumulators(i)(j) := accumulators(i)(j) + partialSum
+      // Accumulate
+      when(isComputing) {
+        when(io.inputValid && !computing) {
+          // Starting fresh - just use the partial sum
+          accumulators(i)(j) := partialSum
+        }.otherwise {
+          // Continue accumulating
+          accumulators(i)(j) := accumulators(i)(j) + partialSum
+        }
       }
 
       // TODO: bake in quantization here
       io.outputOut(i)(j) := accumulators(i)(j)
     }
   }
+
+  io.outputValid := RegNext(isComputing && cycleCounter === (cycles - 1).U, false.B)
 }

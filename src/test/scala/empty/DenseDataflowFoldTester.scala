@@ -24,10 +24,9 @@ class DenseDataflowFoldTester extends AnyFlatSpec with ChiselScalatestTester {
       Array(20, 13)
     )
 
-    val layer = DenseLayer(m = 2, n = 4, k = 2, weights = weights)
-    val numberOfPEs = 2
+    val layer = DenseLayer(m = 2, n = 4, k = 2, weights = weights, PEsPerOutput = 2)
 
-    test(new DenseDataflowFold(layer, numberOfPEs)) { dut =>
+    test(new DenseDataflowFold(layer)) { dut =>
       // Set inputs (keep them stable for all cycles)
       for (i <- 0 until 2) {
         for (j <- 0 until 4) {
@@ -35,8 +34,15 @@ class DenseDataflowFoldTester extends AnyFlatSpec with ChiselScalatestTester {
         }
       }
 
-      // Need to wait 2 cycles for computation
-      dut.clock.step(2)
+      // Start computation
+      dut.io.inputValid.poke(true.B)
+      dut.clock.step(1)
+      dut.io.inputValid.poke(false.B)
+
+      // Wait for outputValid
+      while (!dut.io.outputValid.peek().litToBoolean) {
+        dut.clock.step(1)
+      }
 
       // Check outputs
       for (i <- 0 until 2) {
@@ -65,18 +71,24 @@ class DenseDataflowFoldTester extends AnyFlatSpec with ChiselScalatestTester {
       Array(20, 13)
     )
 
-    val layer = DenseLayer(m = 2, n = 4, k = 2, weights = weights)
-    val numberOfPEs = 1
+    val layer = DenseLayer(m = 2, n = 4, k = 2, weights = weights, PEsPerOutput = 1)
 
-    test(new DenseDataflowFold(layer, numberOfPEs)) { dut =>
+    test(new DenseDataflowFold(layer)) { dut =>
       for (i <- 0 until 2) {
         for (j <- 0 until 4) {
           dut.io.inputIn(i)(j).poke(input(i)(j).U)
         }
       }
 
-      // Should take 4 cycles now with only 1 PE per output neuron
-      dut.clock.step(4)
+      // Start computation
+      dut.io.inputValid.poke(true.B)
+      dut.clock.step(1)
+      dut.io.inputValid.poke(false.B)
+
+      // Wait for outputValid
+      while (!dut.io.outputValid.peek().litToBoolean) {
+        dut.clock.step(1)
+      }
 
       for (i <- 0 until 2) {
         for (j <- 0 until 2) {
@@ -105,17 +117,24 @@ class DenseDataflowFoldTester extends AnyFlatSpec with ChiselScalatestTester {
       Array(20, 13)
     )
 
-    val layer = DenseLayer(m = 2, n = 4, k = 2, weights = weights)
-    val numberOfPEs = 4
+    val layer = DenseLayer(m = 2, n = 4, k = 2, weights = weights, PEsPerOutput = 4)
 
-    test(new DenseDataflowFold(layer, numberOfPEs)) { dut =>
+    test(new DenseDataflowFold(layer)) { dut =>
       for (i <- 0 until 2) {
         for (j <- 0 until 4) {
           dut.io.inputIn(i)(j).poke(input(i)(j).U)
         }
       }
 
+      // Start computation
+      dut.io.inputValid.poke(true.B)
       dut.clock.step(1)
+      dut.io.inputValid.poke(false.B)
+
+      // Wait for outputValid
+      while (!dut.io.outputValid.peek().litToBoolean) {
+        dut.clock.step(1)
+      }
 
       for (i <- 0 until 2) {
         for (j <- 0 until 2) {

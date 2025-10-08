@@ -38,8 +38,8 @@ class DenseDataflowChainTester extends AnyFlatSpec with ChiselScalatestTester {
       Array(98, 128)
     )
 
-    val layer1 = DenseLayer(m = 2, n = 3, k = 4, weights = weights1)
-    val layer2 = DenseLayer(m = 2, n = 4, k = 2, weights = weights2)
+    val layer1 = DenseLayer(m = 2, n = 3, k = 4, weights = weights1, PEsPerOutput = 3)
+    val layer2 = DenseLayer(m = 2, n = 4, k = 2, weights = weights2, PEsPerOutput = 4)
 
     // Module that connect multiple of these combinational layers into one
     test(new Module {

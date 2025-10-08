@@ -22,7 +22,7 @@ class DenseDataflowTester extends AnyFlatSpec with ChiselScalatestTester {
       Array(3, 4)
     )
 
-    val layer = DenseLayer(m = 2, n = 2, k = 2, weights = weights)
+    val layer = DenseLayer(m = 2, n = 2, k = 2, weights = weights, PEsPerOutput = 2)
 
     test(new DenseDataflow(layer)) { dut =>
       for (i <- 0 until 2) {

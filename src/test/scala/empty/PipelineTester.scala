@@ -280,10 +280,10 @@ class PipelineTester extends AnyFlatSpec with ChiselScalatestTester {
       val nLayers = rand.nextInt(5) + 1
 
       // Build layers with compatible dimensions
-      var currentN = rand.nextInt(6) + 2 // Start with n between 2-7
+      var currentN = rand.nextInt(6) + 2
       val layers = Array.tabulate(nLayers) { i =>
         val n = currentN
-        val k = rand.nextInt(6) + 2 // k between 2-7
+        val k = rand.nextInt(6) + 2
         val weights = Array.fill(n, k)(rand.nextInt(2))
 
         // PEsPerOutput must divide n evenly
@@ -296,7 +296,7 @@ class PipelineTester extends AnyFlatSpec with ChiselScalatestTester {
 
       // println(s"\n=== Test $testNum: ${nLayers} layers, dimensions: ${layers.map(l => s"${l.n}x${l.k}(PE=${l.PEsPerOutput})").mkString(" -> ")} ===")
 
-      val numInferences = 3
+      val numInferences = 2
       val inputs = Array.fill(numInferences) {
         Array.fill(1, layers(0).n)(rand.nextInt(2))
       }

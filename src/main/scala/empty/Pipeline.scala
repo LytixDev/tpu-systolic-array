@@ -1,8 +1,9 @@
 package empty
 
 import chisel3._
+import chisel3.util.{Decoupled, Queue}
 
-class Pipeline(layers: Array[DenseLayer]) extends Module {
+class Pipeline(layers: Array[DenseLayer], fifoDepthBetweenLayers: Int = 2) extends Module {
   require(layers.nonEmpty, "Pipeline must have at least one layer")
 
   // Validate that layers are compatible (output of layer i matches input of layer i+1)
@@ -16,25 +17,26 @@ class Pipeline(layers: Array[DenseLayer]) extends Module {
   val lastLayer = layers.last
 
   val io = IO(new Bundle {
-    val inputIn = Input(Vec(firstLayer.m, Vec(firstLayer.n, UInt(8.W))))
-    val inputValid = Input(Bool())
-    val outputOut = Output(Vec(lastLayer.m, Vec(lastLayer.k, UInt(8.W))))
-    val outputValid = Output(Bool())
+    val inputIn = Flipped(Decoupled(Vec(firstLayer.m, Vec(firstLayer.n, UInt(8.W)))))
+    val outputOut = Decoupled(Vec(lastLayer.m, Vec(lastLayer.k, UInt(8.W))))
   })
 
   val denseModules = layers.map(layer => Module(new DenseDataflowFold(layer)))
 
-  // Connect first layer input
-  denseModules.head.io.inputIn := io.inputIn
-  denseModules.head.io.inputValid := io.inputValid
+  denseModules.head.io.inputIn <> io.inputIn
 
-  // Chain layers together with valid signals
+  // Insert FIFOs between layers to decouple them:
+  // - A layer can produce output and immediately start on new input
+  // - The next layer consumes from FIFO when ready
   for (i <- 0 until denseModules.length - 1) {
-    denseModules(i + 1).io.inputIn := denseModules(i).io.outputOut
-    denseModules(i + 1).io.inputValid := denseModules(i).io.outputValid
+    val fifo = Module(new Queue(
+      Vec(layers(i).m, Vec(layers(i).k, UInt(8.W))),
+      fifoDepthBetweenLayers
+    ))
+    fifo.io.enq <> denseModules(i).io.outputOut
+    denseModules(i + 1).io.inputIn <> fifo.io.deq
   }
 
-  // Connect last layer output
-  io.outputOut := denseModules.last.io.outputOut
-  io.outputValid := denseModules.last.io.outputValid
+  // Connect last layer directly to output
+  io.outputOut <> denseModules.last.io.outputOut
 }

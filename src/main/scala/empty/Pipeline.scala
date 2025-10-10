@@ -1,6 +1,7 @@
 package empty
 
 import chisel3._
+import chisel3.util.Decoupled
 
 class Pipeline(layers: Array[DenseLayer]) extends Module {
   require(layers.nonEmpty, "Pipeline must have at least one layer")
@@ -16,25 +17,15 @@ class Pipeline(layers: Array[DenseLayer]) extends Module {
   val lastLayer = layers.last
 
   val io = IO(new Bundle {
-    val inputIn = Input(Vec(firstLayer.m, Vec(firstLayer.n, UInt(8.W))))
-    val inputValid = Input(Bool())
-    val outputOut = Output(Vec(lastLayer.m, Vec(lastLayer.k, UInt(8.W))))
-    val outputValid = Output(Bool())
+    val inputIn = Flipped(Decoupled(Vec(firstLayer.m, Vec(firstLayer.n, UInt(8.W)))))
+    val outputOut = Decoupled(Vec(lastLayer.m, Vec(lastLayer.k, UInt(8.W))))
   })
 
   val denseModules = layers.map(layer => Module(new DenseDataflowFold(layer)))
 
-  // Connect first layer input
-  denseModules.head.io.inputIn := io.inputIn
-  denseModules.head.io.inputValid := io.inputValid
-
-  // Chain layers together with valid signals
+  denseModules.head.io.inputIn <> io.inputIn
   for (i <- 0 until denseModules.length - 1) {
-    denseModules(i + 1).io.inputIn := denseModules(i).io.outputOut
-    denseModules(i + 1).io.inputValid := denseModules(i).io.outputValid
+    denseModules(i + 1).io.inputIn <> denseModules(i).io.outputOut
   }
-
-  // Connect last layer output
-  io.outputOut := denseModules.last.io.outputOut
-  io.outputValid := denseModules.last.io.outputValid
+  io.outputOut <> denseModules.last.io.outputOut
 }

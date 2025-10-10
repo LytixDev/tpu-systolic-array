@@ -1,7 +1,7 @@
 package empty
 
 import chisel3._
-import chisel3.util.log2Ceil
+import chisel3.util.{log2Ceil, Decoupled, Queue}
 
 /*
  * Dense layer with folding
@@ -10,68 +10,80 @@ import chisel3.util.log2Ceil
  * numberOfPEs = number of multipliers per output channel (per k)
  * Total multipliers = m * k * numberOfPEs
  * Takes n / numberOfPEs cycles to compute
+ *
+ * Uses Decoupled (ready/valid) interfaces for flow control between layers.
+ * -> Similar to FINN, altough they use AXI-streams which we should perhaps look into as well
+ *
+ * The design computes combinationally on input data during the fire cycle to maintain
+ * low latency while still providing proper handshaking for pipelining.
  */
-class DenseDataflowFold(layer: DenseLayer) extends Module {
+class DenseDataflowFold(layer: DenseLayer, inFifoDepth: Int = 2, outFifoDepth: Int = 2) extends Module {
   val io = IO(new Bundle{
-    val inputIn = Input(Vec(layer.m, Vec(layer.n, UInt(8.W))))
-    val inputValid = Input(Bool())
-    val outputOut = Output(Vec(layer.m, Vec(layer.k, UInt(8.W))))
-    val outputValid = Output(Bool())
+    // Flipped turns it into the producer
+    val inputIn = Flipped(Decoupled(Vec(layer.m, Vec(layer.n, UInt(8.W)))))
+    val outputOut = Decoupled(Vec(layer.m, Vec(layer.k, UInt(8.W))))
   })
 
   require(layer.PEsPerOutput >= 1 && layer.PEsPerOutput <= layer.n)
   require(layer.n % layer.PEsPerOutput == 0)
   val cycles = layer.n / layer.PEsPerOutput
 
+  // TODO: Consider storing this in BRAM?
   val weights = VecInit(layer.weights.map(row =>
     VecInit(row.map(w => w.U(8.W)))
   ))
 
-  // Counts from 0 to cycles-1
+  // State of the compution
   val cycleCounter = RegInit(0.U(log2Ceil(cycles + 1).W))
   val computing = RegInit(false.B)
+  // TODO: Will this be stored in BRAM?
+  val inputReg = Reg(Vec(layer.m, Vec(layer.n, UInt(8.W))))
 
-  // Immidetly start computing when the valid signal is given
-  val isComputing = io.inputValid || computing
-  when(io.inputValid && !computing) {
+  // One accumulator per output element (m*k total)
+  val accumulators = Reg(Vec(layer.m, Vec(layer.k, UInt(32.W))))
+
+  // Can only accept input when not already computing
+  io.inputIn.ready := !computing
+
+  val isComputing = io.inputIn.fire || computing
+
+  // Start computing
+  when(io.inputIn.fire && !computing) {
+    inputReg := io.inputIn.bits
     computing := true.B
     cycleCounter := 1.U
-  } .elsewhen(computing && cycleCounter < (cycles - 1).U) {
+  }.elsewhen(computing && cycleCounter < (cycles - 1).U) {
     cycleCounter := cycleCounter + 1.U
-  } .elsewhen(computing && cycleCounter === (cycles - 1).U) {
+  }.elsewhen(computing && cycleCounter === (cycles - 1).U) {
+    // reset
     computing := false.B
     cycleCounter := 0.U
   }
 
-  // One accumulator per output element (m*k total)
-  // TODO: There is some design space exploration available here
-  val accumulators = Reg(Vec(layer.m, Vec(layer.k, UInt(32.W))))
-
-  for (i <- 0 until layer.m) { // for each row in the input
-    for (j <- 0 until layer.k) { // for each output element
+  // Compute and accumulate
+  for (i <- 0 until layer.m) {
+    for (j <- 0 until layer.k) {
       // Compute partial sum using layer.PEsPerOutput multipliers
-      // NOTE: this could be optimized using an adder tree or something
       var partialSum = 0.U
       for (pe <- 0 until layer.PEsPerOutput) {
         val idx = cycleCounter * layer.PEsPerOutput.U + pe.U
-        partialSum = partialSum + io.inputIn(i)(idx) * weights(idx)(j)
+        // For the first cycle we use the input data, otherwise we use the regs
+        val inputVal = Mux(io.inputIn.fire, io.inputIn.bits(i)(idx), inputReg(i)(idx))
+        partialSum = partialSum + inputVal * weights(idx)(j)
       }
 
       // Accumulate
       when(isComputing) {
-        when(io.inputValid && !computing) {
-          // Starting fresh - just use the partial sum
+        when(io.inputIn.fire && !computing) {
+          // First cycle
           accumulators(i)(j) := partialSum
         }.otherwise {
-          // Continue accumulating
           accumulators(i)(j) := accumulators(i)(j) + partialSum
         }
       }
-
-      // TODO: bake in quantization here
-      io.outputOut(i)(j) := accumulators(i)(j)
     }
   }
 
-  io.outputValid := RegNext(isComputing && cycleCounter === (cycles - 1).U, false.B)
+  io.outputOut.valid := RegNext(isComputing && cycleCounter === (cycles - 1).U, false.B)
+  io.outputOut.bits := accumulators
 }

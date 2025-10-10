@@ -14,10 +14,9 @@ import chisel3.util.{log2Ceil, Decoupled, Queue}
  * Uses Decoupled (ready/valid) interfaces for flow control between layers.
  * -> Similar to FINN, altough they use AXI-streams which we should perhaps look into as well
  *
- * The design computes combinationally on input data during the fire cycle to maintain
- * low latency while still providing proper handshaking for pipelining.
+ * NOTE: Each layer make the assumtion that the downstream FIFO always has room to push a new layers' outputs to.
  */
-class DenseDataflowFold(layer: DenseLayer, inFifoDepth: Int = 2, outFifoDepth: Int = 2) extends Module {
+class DenseDataflowFold(layer: DenseLayer, inFifoDepth: Int = 2) extends Module {
   val io = IO(new Bundle{
     // Flipped turns it into the producer
     val inputIn = Flipped(Decoupled(Vec(layer.m, Vec(layer.n, UInt(8.W)))))
@@ -42,12 +41,13 @@ class DenseDataflowFold(layer: DenseLayer, inFifoDepth: Int = 2, outFifoDepth: I
   // One accumulator per output element (m*k total)
   val accumulators = Reg(Vec(layer.m, Vec(layer.k, UInt(32.W))))
 
-  // Can only accept input when not already computing
+  // Assumption: FIFOs always have space, so we don't need to wait for output to be consumed
   io.inputIn.ready := !computing
 
   val isComputing = io.inputIn.fire || computing
 
-  // Start computing
+  // Start computing immeditely as the input gets data
+  // We assume all the inputs are ready at this point
   when(io.inputIn.fire && !computing) {
     inputReg := io.inputIn.bits
     computing := true.B
@@ -55,7 +55,7 @@ class DenseDataflowFold(layer: DenseLayer, inFifoDepth: Int = 2, outFifoDepth: I
   }.elsewhen(computing && cycleCounter < (cycles - 1).U) {
     cycleCounter := cycleCounter + 1.U
   }.elsewhen(computing && cycleCounter === (cycles - 1).U) {
-    // reset
+    // Computation done, immediately become ready for next input
     computing := false.B
     cycleCounter := 0.U
   }
@@ -84,6 +84,7 @@ class DenseDataflowFold(layer: DenseLayer, inFifoDepth: Int = 2, outFifoDepth: I
     }
   }
 
+  // Output is valid one cycle after computation completes
   io.outputOut.valid := RegNext(isComputing && cycleCounter === (cycles - 1).U, false.B)
   io.outputOut.bits := accumulators
 }

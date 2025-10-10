@@ -6,19 +6,17 @@ import chisel3.util.{log2Ceil, Decoupled, Queue}
 /*
  * Dense layer with folding
  * NOTE: Assumes 8 bit quantization of inputs and weights with 32 bit accumulators
+ * TODO: the above note
  *
- * numberOfPEs = number of multipliers per output channel (per k)
+ * numberOfPEs = number of multipliers per output channel/k
  * Total multipliers = m * k * numberOfPEs
  * Takes n / numberOfPEs cycles to compute
  *
  * Uses Decoupled (ready/valid) interfaces for flow control between layers.
- * -> Similar to FINN, altough they use AXI-streams which we should perhaps look into as well
- *
- * NOTE: Each layer make the assumtion that the downstream FIFO always has room to push a new layers' outputs to.
+ * Each layer has an internal output FIFO for buffering results, enabling true pipelining
  */
-class DenseDataflowFold(layer: DenseLayer, inFifoDepth: Int = 2) extends Module {
+class DenseDataflowFold(layer: DenseLayer, outFifoDepth: Int = 2) extends Module {
   val io = IO(new Bundle{
-    // Flipped turns it into the producer
     val inputIn = Flipped(Decoupled(Vec(layer.m, Vec(layer.n, UInt(8.W)))))
     val outputOut = Decoupled(Vec(layer.m, Vec(layer.k, UInt(8.W))))
   })
@@ -32,22 +30,28 @@ class DenseDataflowFold(layer: DenseLayer, inFifoDepth: Int = 2) extends Module 
     VecInit(row.map(w => w.U(8.W)))
   ))
 
-  // State of the compution
+  // Computation state
   val cycleCounter = RegInit(0.U(log2Ceil(cycles + 1).W))
   val computing = RegInit(false.B)
-  // TODO: Will this be stored in BRAM?
-  val inputReg = Reg(Vec(layer.m, Vec(layer.n, UInt(8.W))))
+  // TODO: So we load from the FIFO and into the regs. Can we just load from the FIFO and avoid storing it in the regs?
+  val inputReg = Reg(Vec(layer.m, Vec(layer.n, UInt(8.W)))) // TODO: Is this stored in BRAM?
 
   // One accumulator per output element (m*k total)
+  // TODO: maybe with the FIFOs we can optimize this? i.e maybe we need less
   val accumulators = Reg(Vec(layer.m, Vec(layer.k, UInt(32.W))))
 
-  // Assumption: FIFOs always have space, so we don't need to wait for output to be consumed
+  // NOTE: Incurs a 1 cycle latency by default w/o the flow = true param
+  // TODO: So the FIFOs give us decoupling between layers. However, if two layers are perfectly in sync, they don't
+  //       necessarily need to be decoupled and perhaps we could directly wire them together?
+  val outputFifo = Module(new Queue(Vec(layer.m, Vec(layer.k, UInt(8.W))), outFifoDepth, flow=true))
+
+  // Can accept input when not computing
+  // output FIFOs handles buffering
   io.inputIn.ready := !computing
 
+  // Start computing immeditely as the input gets data
   val isComputing = io.inputIn.fire || computing
 
-  // Start computing immeditely as the input gets data
-  // We assume all the inputs are ready at this point
   when(io.inputIn.fire && !computing) {
     inputReg := io.inputIn.bits
     computing := true.B
@@ -55,7 +59,6 @@ class DenseDataflowFold(layer: DenseLayer, inFifoDepth: Int = 2) extends Module 
   }.elsewhen(computing && cycleCounter < (cycles - 1).U) {
     cycleCounter := cycleCounter + 1.U
   }.elsewhen(computing && cycleCounter === (cycles - 1).U) {
-    // Computation done, immediately become ready for next input
     computing := false.B
     cycleCounter := 0.U
   }
@@ -84,7 +87,11 @@ class DenseDataflowFold(layer: DenseLayer, inFifoDepth: Int = 2) extends Module 
     }
   }
 
-  // Output is valid one cycle after computation completes
-  io.outputOut.valid := RegNext(isComputing && cycleCounter === (cycles - 1).U, false.B)
-  io.outputOut.bits := accumulators
+  // Connect computation results to output FIFO
+  // TODO: Are there scenarios where the downstream layer can start eagerly working on partial results?
+  outputFifo.io.enq.valid := RegNext(isComputing && cycleCounter === (cycles - 1).U, false.B)
+  outputFifo.io.enq.bits := accumulators
+
+  // External output comes from the output FIFO
+  io.outputOut <> outputFifo.io.deq
 }

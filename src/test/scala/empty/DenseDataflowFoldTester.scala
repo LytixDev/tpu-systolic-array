@@ -27,27 +27,28 @@ class DenseDataflowFoldTester extends AnyFlatSpec with ChiselScalatestTester {
     val layer = DenseLayer(m = 2, n = 4, k = 2, weights = weights, PEsPerOutput = 2)
 
     test(new DenseDataflowFold(layer)) { dut =>
-      // Set inputs (keep them stable for all cycles)
+      // Set inputs on the bits field of Decoupled
       for (i <- 0 until 2) {
         for (j <- 0 until 4) {
-          dut.io.inputIn(i)(j).poke(input(i)(j).U)
+          dut.io.inputIn.bits(i)(j).poke(input(i)(j).U)
         }
       }
 
-      // Start computation
-      dut.io.inputValid.poke(true.B)
+      // Assert valid and ready to start computation
+      dut.io.inputIn.valid.poke(true.B)
+      dut.io.outputOut.ready.poke(true.B)
       dut.clock.step(1)
-      dut.io.inputValid.poke(false.B)
+      dut.io.inputIn.valid.poke(false.B)
 
-      // Wait for outputValid
-      while (!dut.io.outputValid.peek().litToBoolean) {
+      // Wait for output to become valid
+      while (!dut.io.outputOut.valid.peek().litToBoolean) {
         dut.clock.step(1)
       }
 
       // Check outputs
       for (i <- 0 until 2) {
         for (j <- 0 until 2) {
-          dut.io.outputOut(i)(j).expect(expected(i)(j).U)
+          dut.io.outputOut.bits(i)(j).expect(expected(i)(j).U)
         }
       }
     }
@@ -76,23 +77,24 @@ class DenseDataflowFoldTester extends AnyFlatSpec with ChiselScalatestTester {
     test(new DenseDataflowFold(layer)) { dut =>
       for (i <- 0 until 2) {
         for (j <- 0 until 4) {
-          dut.io.inputIn(i)(j).poke(input(i)(j).U)
+          dut.io.inputIn.bits(i)(j).poke(input(i)(j).U)
         }
       }
 
       // Start computation
-      dut.io.inputValid.poke(true.B)
+      dut.io.inputIn.valid.poke(true.B)
+      dut.io.outputOut.ready.poke(true.B)
       dut.clock.step(1)
-      dut.io.inputValid.poke(false.B)
+      dut.io.inputIn.valid.poke(false.B)
 
-      // Wait for outputValid
-      while (!dut.io.outputValid.peek().litToBoolean) {
+      // Wait for output to become valid
+      while (!dut.io.outputOut.valid.peek().litToBoolean) {
         dut.clock.step(1)
       }
 
       for (i <- 0 until 2) {
         for (j <- 0 until 2) {
-          dut.io.outputOut(i)(j).expect(expected(i)(j).U)
+          dut.io.outputOut.bits(i)(j).expect(expected(i)(j).U)
         }
       }
     }
@@ -122,23 +124,24 @@ class DenseDataflowFoldTester extends AnyFlatSpec with ChiselScalatestTester {
     test(new DenseDataflowFold(layer)) { dut =>
       for (i <- 0 until 2) {
         for (j <- 0 until 4) {
-          dut.io.inputIn(i)(j).poke(input(i)(j).U)
+          dut.io.inputIn.bits(i)(j).poke(input(i)(j).U)
         }
       }
 
       // Start computation
-      dut.io.inputValid.poke(true.B)
+      dut.io.inputIn.valid.poke(true.B)
+      dut.io.outputOut.ready.poke(true.B)
       dut.clock.step(1)
-      dut.io.inputValid.poke(false.B)
+      dut.io.inputIn.valid.poke(false.B)
 
-      // Wait for outputValid
-      while (!dut.io.outputValid.peek().litToBoolean) {
+      // Wait for output to become valid
+      while (!dut.io.outputOut.valid.peek().litToBoolean) {
         dut.clock.step(1)
       }
 
       for (i <- 0 until 2) {
         for (j <- 0 until 2) {
-          dut.io.outputOut(i)(j).expect(expected(i)(j).U)
+          dut.io.outputOut.bits(i)(j).expect(expected(i)(j).U)
         }
       }
     }
